@@ -1,20 +1,13 @@
 package Utilities
 
 import (
-   //"fmt"
    "encoding/json"
    "net/http"
 )
-/*
-func MergeSlices(slices [][]string) []string {
-   var mergedSlice []string
-   for _, slice := range slices {
-      fmt.Printf("2**%d = %d\n", i, v)
-      mergedSlice = append(mergedSlice, slice)
-   }
-   return mergedSlice
-}*/
 
+/* Removing duplicates from a slice of string.
+This method shall remove the duplicates values in the specified slice of string.
+*/
 func RemoveSliceDuplicates(slices []string) []string { 
    keys := make(map[string]bool) 
    uniques := []string{} 
@@ -28,15 +21,19 @@ func RemoveSliceDuplicates(slices []string) []string {
    return uniques 
 } 
 
-
+/* Responsing a JSON HTTP.
+This method shall transform the specified data structure into a JSON content type, and send an HTTP response of it.
+If the transformation is failed, code 400 shall be caught and displayed, else code 200 shall be caught and displayed.
+*/
 func WriteJson(w http.ResponseWriter, data interface{}) { 
    bytes, err := json.Marshal(data)
+   // JSON HTTP incorrect: code 400
    if err != nil {
       w.WriteHeader(http.StatusBadRequest)
       w.Write([]byte(err.Error()))
       return
    }
-
+   // JSON HTTP correct: code 200
    w.Header().Add("content-type", "application/json")
    w.WriteHeader(http.StatusOK)
    w.Write(bytes)
