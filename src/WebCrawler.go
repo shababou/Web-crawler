@@ -17,35 +17,54 @@ const PORT = ":8080"
 const STATUS = "status"
 const RESULT = "result"
 
+/* Activity of a worker:
+- status true when active,
+- status false when inactive */
 type Worker struct {
 	status bool
 }
 
+/* A Team of workers */
 type TeamWorkers struct {
 	sync.Mutex
 	workers []Worker
 }
 
+/* Job definition as per added in the entry point:
+- job_id: unique id of the job,
+- urls: specified URLs,
+- workers: specified number of workers*/
 type JobDef struct {
 	Job_id string `json:"job_id"`
 	Urls []string `json:"urls"`
 	NbWorkers int `json:"workers"`
 }
+
+/* Job status with number of completed and in_progress URLs */
 type JobStatus struct {
 	sync.Mutex
 	Completed int `json:"completed"`
 	InProgress int `json:"in_progress"`
 }
+
+/* Result images per specific URL in the job */
 type JobResult map[string][]string 
 
-
-
+/* Information evolving during Job processing:
+- waitingUrls: specific URLs (keys) with their waiting URLs UrlData (values),
+- completedUrls: specific URLs (keys) with their completed children URLs and their associated data (values),
+-  workersStatus: status of all the workers of the Job.*/
 type JobProcessData struct {
 	waitingUrls map[string]*UrlData
 	completedUrls map[string]*MapUrls
 	workersStatus *TeamWorkers
 }
 
+/* Job definition with all its data:
+- Def: as per the JSON of the addingJob entry point,
+- ProcessData:
+- Stats: number of completed and in-process URLs,
+- Result: images per specific URL.*/
 type Job struct {
 	Def *JobDef
 	ProcessData *JobProcessData
@@ -53,27 +72,10 @@ type Job struct {
 	Result *JobResult
 }
 
+/* Map of all the jobs (values) defined by their unique job_id (keys) */
 type Jobs struct {
 	jobs map[string]*Job
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -393,8 +395,7 @@ func (allJobs *Jobs) AddJob(w http.ResponseWriter, r *http.Request) {
 }
 
 
-
-
+/* Entry pooint of the API*/
 func main() {
 
 	allJobs := Jobs{ jobs : map[string]*Job{} }

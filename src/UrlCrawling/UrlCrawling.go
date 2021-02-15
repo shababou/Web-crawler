@@ -9,13 +9,18 @@ import (
    "sync"
 )
 
-const LINKS_LEVEL 2
+const LINKS_LEVEL = 2
 
+/* Map between each specific URLs (keys) and their children URLS (values) */
 type MapUrls struct {
    sync.Mutex
    Urls map[string][]string
 }
 
+/* Data related to a specific URL:
+- DomainUrl: parsed URL of the specific URL,
+- ChildrenUrls: URLs got when crawling the specific URL,
+- Data: images found through the specific URL and its children.*/
 type UrlData struct {
    sync.Mutex
    DomainUrl *url.URL
@@ -25,7 +30,7 @@ type UrlData struct {
 
 
 
-// Helper function to pull the href attribute from a Token
+// Helper function to get the value of the specified tag from a Token
 func getTokenValue(token html.Token, tag string) (ok bool, val string) {
    // Iterate over token attributes until we find an "href"
    for _, att := range token.Attr {
@@ -34,10 +39,7 @@ func getTokenValue(token html.Token, tag string) (ok bool, val string) {
          ok = true
       }
    }
-   
-   // "bare" return will return the variables (ok, href) as 
-    // defined in the function definition
-   return
+   return ok, val
 }
 
 /* Crawling a URL page.
