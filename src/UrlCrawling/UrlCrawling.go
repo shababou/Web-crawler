@@ -11,7 +11,7 @@ import (
 
 const LINKS_LEVEL = 2
 
-/* Map between each specific URLs (keys) and their children URLS (values) */
+/* Map between each specific URLs (keys) and their children URLs (values) */
 type MapUrls struct {
    sync.Mutex
    Urls map[string][]string
@@ -31,29 +31,28 @@ type UrlData struct {
 
 
 // Helper function to get the value of the specified tag from a Token
-func getTokenValue(token html.Token, tag string) (ok bool, val string) {
-   // Iterate over token attributes until we find an "href"
+func getTokenValue(token html.Token, tag string) (tagFound bool, val string) {
+   // Iterate over token attributes until we find the specified tag
    for _, att := range token.Attr {
       if att.Key == tag {
          val = att.Val
-         ok = true
+         tagFound = true
       }
    }
-   return ok, val
+   return tagFound, val
 }
 
 /* Crawling a URL page.
-This method shall process a crawl on the specified URL to get the children crawled URLs and their data to the childrenUrls parameter of the
-receiver specified urlData.
+This method shall crawl the specified URL to get the children crawled URLs and their data.
 It shall read the content body of the specified URL, and terminates the function if an error is raised or if the end of URL is reached.
-Else, it shall go through all the specified URL and:
+Else, it shall go through the specified URL and:
 - add a child crawled URL if the following conditions are met:
    - links grabing is enabled, indeed if at least one of the below conditions is met:
       - the specified URL is the same as the reference URL given by the receiver specified urlData,
       - the specified URL is maximum level 2, relatively to the reference URL.
    - the child crawled URL is not already part of the specified crawledUrls,
-   - the child crawled URL has the same host valueas the reference URL's one.
-- add as data images that have the follwoinvg extensions only: .png, .gif or .jpeg.
+   - the child crawled URL has the same host value as the reference URL's one.
+- add to the data of the the receiver specified urlData the images that have the following extensions only: .png, .gif or .jpeg.
 */
 func (urlData *UrlData) CrawlUrl(urlToCrawl *string, crawledUrls *MapUrls) { 
    // Reading URL content body, and leaving the function if an error is raised.

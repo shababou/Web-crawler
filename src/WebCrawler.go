@@ -53,7 +53,7 @@ type JobResult map[string][]string
 /* Information evolving during Job processing:
 - waitingUrls: specific URLs (keys) with their waiting URLs UrlData (values),
 - completedUrls: specific URLs (keys) with their completed children URLs and their associated data (values),
--  workersStatus: status of all the workers of the Job.*/
+- workersStatus: status of all the workers of the Job.*/
 type JobProcessData struct {
 	waitingUrls map[string]*UrlData
 	completedUrls map[string]*MapUrls
@@ -62,7 +62,7 @@ type JobProcessData struct {
 
 /* Job definition with all its data:
 - Def: as per the JSON of the addingJob entry point,
-- ProcessData:
+- ProcessData: information during job processing,
 - Stats: number of completed and in-process URLs,
 - Result: images per specific URL.*/
 type Job struct {
@@ -79,7 +79,7 @@ type Jobs struct {
 
 
 
-/* Getting the status of of Team of workers.
+/* Getting the status of a Team of workers.
 This method shall return a slice for the workers' status of the receiver specified team, as well as the number of active workers.
 */
 func (team *TeamWorkers) GetTeamStatus() ([]bool, int) {
@@ -97,82 +97,58 @@ func (team *TeamWorkers) GetTeamStatus() ([]bool, int) {
 /* Updating job summary.
 This method shall update the status and result parameters of the receiver specified job:
 - the status shall consist in the number of in_progress URLs and completed URLs among the URLs defined in this job,
-- the result shall consist in the list of unique all data retrieved from the crawling for each of the URLs defined in the job.
+- the result shall consist in listing all unique data (images) retrieved from the crawling process for each of the URLs defined in the job.
 */
 func (job *Job) UpdateJobStatus() {
-	/*
-			completedUrls := []string{}
-		jobCompletedUrls := job.ProcessData.completedUrls
-		for url, urlData := range jobCompletedUrls {
-			urlData.Lock()
-			
-			completedData := []string{}
-			for childUrl, childUrlData := range urlData.urls {
-				completedUrls = append(completedUrls, childUrl) 
-	        	completedData = append(completedData, childUrlData...) 
+	// Retrieving the data of the completed URLs
+	jobCompletedUrls := job.ProcessData.completedUrls
+	// Looping on each URL from the receiver specified job
+	for url, UrlData := range jobCompletedUrls {
+		UrlData.Lock()
+		completedData := []string{}
+		// Appending data of each child URLs of each specified URL
+		for _, childUrlData := range UrlData.Urls {
+	        completedData = append(completedData, childUrlData...) 
+	      } 
+	     // Removing data duplicates
+      	completedData = RemoveSliceDuplicates(completedData)
+      	(*job.Result)[url] = completedData
+      	UrlData.Unlock()
+      }
 
-	      	} 
-	      	completedUrls = RemoveSliceDuplicates(completedUrls)
-      		completedData = RemoveSliceDuplicates(completedData)
-      		job.Result[url] = completedData
-      		urlData.Unlock()
-      	}
-      	job.Status.Completed = len(completedUrls)
-
-      	jobWaitingUrls := job.ProcessData.waitingUrls
-      	waitingUrls := []string{}
-		for _, urlData := range jobWaitingUrls {
-			urlData.Lock()
-			for childUrl, _ := range urlData.childrenUrls {
-				waitingUrls = append(waitingUrls, childUrl) 
-	      	} 
-	      	waitingUrls = RemoveSliceDuplicates(waitingUrls)
-      		urlData.Unlock()
-      	}
-      	job.Status.InProgress = len(waitingUrls)
-	*/
-		jobCompletedUrls := job.ProcessData.completedUrls
-		for url, UrlData := range jobCompletedUrls {
-			UrlData.Lock()
-			completedData := []string{}
-			for _, childUrlData := range UrlData.Urls {
-	        	completedData = append(completedData, childUrlData...) 
-
-	      	} 
-      		completedData = RemoveSliceDuplicates(completedData)
-      		(*job.Result)[url] = completedData
-      		UrlData.Unlock()
-      	}
-
-      	completed := 0
-      	inProgress := 0
-      	jobWaitingUrls := job.ProcessData.waitingUrls
-		for _, UrlData := range jobWaitingUrls {
-			UrlData.Lock()
-			if(len(UrlData.ChildrenUrls)==0){
-				completed++
-			} else {
-				inProgress++
-			}
-      		UrlData.Unlock()
-      	}
-      	job.Status.Completed = completed
-      	job.Status.InProgress = inProgress
+    completed := 0
+    inProgress := 0
+    // Computing the number of in_progress and completed URLs
+    jobWaitingUrls := job.ProcessData.waitingUrls
+    // Looping on each URL from the receiver specified job
+	for _, UrlData := range jobWaitingUrls {
+		UrlData.Lock()
+		if(len(UrlData.ChildrenUrls) == 0){
+			// No children URLs waiting for the current specified URL anymore -> this URL is completed !
+			completed++
+		} else {
+			// At leasr one child URL waiting for the current specified URL -> this URL is in_progress !
+			inProgress++
+		}
+      	UrlData.Unlock()
+      }
+    job.Status.Completed = completed
+    job.Status.InProgress = inProgress
  }
 
 
 /* Job worker in action.
-This method shall define the work cycle of the worker specified by its id as following:
+This method shall define the work cycle of the worker specified by its workerId as following:
 1- The worker shall iterate through the URLs defined in the specified receiver job and select the first child URL available in the URLs waiting list.
-2- If a child URL is available, the worker shall:  
-	- update its status to true meaning he is active,
-	- remove the selected URL child from the URLs waiting list,
-	- crawl the selected URL,
-	- add the selected URL child to the URLs completed list.
+2- If a child URL is available, the worker shall select the first available URL by:  
+	- updating its status to true meaning he is active,
+	- removing the selected URL child from the URLs waiting list,
+	- crawling the selected URL,
+	- adding the selected URL child to the URLs completed list.
    Else, the worker shall:
 	- update its status to false meaning he is inactive,
 	- get the activity status of the other job team workers and:
-		- iterate through step 1- until finding a task if at least one worker of the team is active,
+		- iterate through step 1- until finding a task (URL to crawl) if at least one worker of the team is active,
 		- leave the job else.
 	  Rationale: the worker leaves the job only if all the other workers are inactive, meaning that the job is completed.
 */
@@ -306,10 +282,10 @@ func (job *Job) InitJob(jobDef *JobDef) {
 }
 
 /* Getting job status and result end point implementation.
-This method shall read the content of an http request, and make sure that the HTTP request is composed by one of the following synthaxis:
+This method shall read the content of an HTTP request, and make sure that the HTTP request is composed by one of the following synthaxis:
 1- /jobs/{job_id}/status,
 2- /jobs/{job_id}/result.
-If request is one of the cases 1- and 2- above, and if job_id is existing among allJobs specified receiver parameter, code 200 shall be displayed, and following shall be performed:
+If the request is one of the cases 1- and 2- above, and if job_id is existing among the allJobs specified receiver parameter, code 200 shall be displayed, and following shall be performed:
 - updating the specified job status
 - display the response as a new JSON of JobStatus of JobResult type, respectively if request content is "status" or "result".
 Else, code 404 shall be caught and displayed. 
@@ -344,7 +320,7 @@ func (allJobs *Jobs) GetJobData(w http.ResponseWriter, r *http.Request) {
 }
 
 /* Adding job end point implementation.
-This method shall read the content of an http request, and make sure the request is JSON content type.
+This method shall read the content of an HTTP request, and make sure the request is JSON content type.
 The JSON decoded shall be JobDef structure type. 
 If the request is not a JSON content type or malformed JSON, code 400 shall be caught and displayed.
 Else, code 200 shall be caught and displayed, and following shall be performed:
@@ -395,7 +371,7 @@ func (allJobs *Jobs) AddJob(w http.ResponseWriter, r *http.Request) {
 }
 
 
-/* Entry pooint of the API*/
+/* Entry point of the API*/
 func main() {
 
 	allJobs := Jobs{ jobs : map[string]*Job{} }
