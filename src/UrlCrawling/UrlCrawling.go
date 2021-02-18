@@ -9,23 +9,31 @@ import (
    "sync"
 )
 
-const LINKS_LEVEL = 2
+const LINKS_LEVEL = 2 //Crawling depth
 
-/* Map between each specific URLs (keys) and their children URLs (values) */
-type MapUrls struct {
+/* Map between URLs (keys) and their data/images (values) */
+type MapUrlsData struct {
    sync.Mutex
-   Urls map[string][]string
+   UrlsData map[string]map[string]string
 }
 
-/* Data related to a specific URL:
+/* Slice of URLs */
+type Urls struct {
+   sync.Mutex
+   Urls map[string]string
+}
+
+/* Processing Info related to a specific URL:
 - DomainUrl: parsed URL of the specific URL,
-- ChildrenUrls: URLs got when crawling the specific URL,
-- Data: images found through the specific URL and its children.*/
-type UrlData struct {
+- WaitingUrls: related URLs waiting to be crawled, added when the specific URL and its related URLs are crawled,
+- CompletedUrls: related URLs crawled among those previously in the WaitingUrls set,
+- ProcessingUrls: related URLs being crawled, so not belonging to the WaitingUrls set anymore, and not yet belonging to the CompletedUrls set.*/
+type UrlProcess struct {
    sync.Mutex
    DomainUrl *url.URL
-   ChildrenUrls map[string]string
-   Data []string
+   WaitingUrls *Urls
+   CrawledUrls *MapUrlsData
+   ProcessingUrls *MapUrlsData
 }
 
 
@@ -43,18 +51,20 @@ func getTokenValue(token html.Token, tag string) (tagFound bool, val string) {
 }
 
 /* Crawling a URL page.
-This method shall crawl the specified URL to get the children crawled URLs and their data.
+This method shall crawl the specified URL to get its data (images) and new URLs to crawl.
 It shall read the content body of the specified URL, and terminates the function if an error is raised or if the end of URL is reached.
 Else, it shall go through the specified URL and:
-- add a child crawled URL if the following conditions are met:
+- add found URLs to the waiting URLs set of the specified receiver urlProcess if the following conditions are met:
    - links grabing is enabled, indeed if at least one of the below conditions is met:
-      - the specified URL is the same as the reference URL given by the receiver specified urlData,
+      - the specified URL is the same as the reference URL given by the specified receiver urlProcess,
       - the specified URL is maximum level 2, relatively to the reference URL.
-   - the child crawled URL is not already part of the specified crawledUrls,
-   - the child crawled URL has the same host value as the reference URL's one.
-- add to the data of the the receiver specified urlData the images that have the following extensions only: .png, .gif or .jpeg.
+   - the found URLs are not already part of the crawled URLs nor processing URLs set of the specified receiver urlProcess,
+   - the found URLs have the same host value as the reference URL's one.
+- add found data (images) for the specified URL in the processing URLs set of the specified receiver urlProcess if:
+   - the found data have not been added for the specified URL yet,
+   - the found data are images that have the following extensions only: .png, .gif or .jpeg.
 */
-func (urlData *UrlData) CrawlUrl(urlToCrawl *string, crawledUrls *MapUrls) { 
+func (urlProcess *UrlProcess) CrawlUrl(urlToCrawl *string) { 
    // Reading URL content body, and leaving the function if an error is raised.
    urlContent, err := http.Get(*urlToCrawl)
    if err != nil {
@@ -64,7 +74,7 @@ func (urlData *UrlData) CrawlUrl(urlToCrawl *string, crawledUrls *MapUrls) {
    urlBody := urlContent.Body
    defer urlBody.Close()
 
-   refUrl := urlData.DomainUrl
+   refUrl := urlProcess.DomainUrl
 
    collectLinksEnable := false
    urlExtension := strings.SplitAfter(*urlToCrawl, refUrl.String())
@@ -94,18 +104,25 @@ func (urlData *UrlData) CrawlUrl(urlToCrawl *string, crawledUrls *MapUrls) {
                      parsedUrl, errParse := ParseUrl(&link)
                      if(errParse == nil){
                         linkAbs := refUrl.ResolveReference(parsedUrl)
-                        // Checking if the parsed URL link was already seen on the specified crawled URLs
+                        // Checking that the parsed URL link is not in the crawling URLs set neither processing URLs set from the receiver specified URL process
+                        crawledUrls := urlProcess.CrawledUrls
+                        processingUrls := urlProcess.ProcessingUrls
+                        processingUrls.Lock()
+                        _, alreadyProcessing := processingUrls.UrlsData[linkAbs.String()]
+                        processingUrls.Unlock()
                         crawledUrls.Lock()
-                        if _, alreadyCrawled := crawledUrls.Urls[linkAbs.String()]; !alreadyCrawled{
-                           // If not crawled yet, checking if the host of the parsed URL is the same as the one of the reference URL
+                        _, alreadyCrawled := crawledUrls.UrlsData[linkAbs.String()]
+                        crawledUrls.Unlock()
+                        if (!alreadyCrawled && !alreadyProcessing) {
+                           // If the parsed URL link never seen yet, checking if the host of the parsed URL is the same as the one of the reference URL
                            if((linkAbs.Host == refUrl.Host)){ 
-                              // Adding the parsed URL link to the specified crawled URLs
-                              urlData.Lock()
-                              urlData.ChildrenUrls[linkAbs.String()] = "" 
-                              urlData.Unlock()     
+                              // Adding the parsed URL link as a new key in the waiting URLs set from the receiver specified URL process (no need to have a value associated to this key)
+                              waitingUrls := urlProcess.WaitingUrls
+                              waitingUrls.Lock()
+                              waitingUrls.Urls[linkAbs.String()] = "" 
+                              waitingUrls.Unlock()     
                            }  
                         }
-                        crawledUrls.Unlock()
                      }
                   }    
                }
@@ -116,16 +133,20 @@ func (urlData *UrlData) CrawlUrl(urlToCrawl *string, crawledUrls *MapUrls) {
                if hasImg {
                   // If exisiting, parsing the image path to the absolute URL path
                   parsedUrl, errParse := ParseUrl(&img)
-                  if(errParse==nil){
+                  if(errParse == nil){
                      imgAbs := refUrl.ResolveReference(parsedUrl)
                      // Checking if image extension is .png, .gif or .jpeg
                      imgAbsSplit := strings.Split(imgAbs.String(), ".")
                      imgAbsExtension := imgAbsSplit[len(imgAbsSplit)-1] 
                      if((imgAbsExtension == "png") || (imgAbsExtension == "gif") || (imgAbsExtension == "jpeg")){
                         // Adding the parsed URL link to the specified crawled URLs
-                        urlData.Lock()
-                        urlData.Data = append(urlData.Data, imgAbs.String())      
-                        urlData.Unlock()          
+                        processingUrls := urlProcess.ProcessingUrls
+                        processingUrls.Lock()
+                        if _, alreadySeen := processingUrls.UrlsData[*urlToCrawl][imgAbs.String()]; !alreadySeen {
+                           // Adding the parsed URL link if not seen yet during the on-going crawling as a new key in the processing URLs set from the receiver specified URL process (no need to have a value associated to this key)
+                           processingUrls.UrlsData[*urlToCrawl][imgAbs.String()] = ""    
+                        }
+                        processingUrls.Unlock()          
                      }
                   }
                }
@@ -144,19 +165,25 @@ func ParseUrl(urlToParse *string) (*url.URL, error) {
    return urlParsed, err
 }
 
-/* UrlData initialization.
-This method shall initialize a UrlData by:
-- assigning the parsed specified URL to the domainUrl parameter,
-- initializing the childrenUrls parameter with the specified URL only,
-- initializing the data parameter to empty.
+/* UrlProcess initialization.
+This method shall initialize a UrlProcess by:
+- assigning the parsed specified URL to the DomainUrl parameter,
+- initializing the waitingUrls parameter with the specified URL only (no data): will be used as a set to store all the URLs related to the specified URL, waiting to be crawled,
+- initializing the processingUrls parameter empty (no URL nor data): will be used as a set to store all the URLs related to the specified URL, being crawled,
+- initializing the crawledUrls parameter empty (no URL nor data): will be used as a set to store all the URLs related to the specified URL, already crawled.
 */
-func (urlData *UrlData) InitUrlData(urlToParse *string) {
+func (urlProcess *UrlProcess) InitUrlProcess(urlToParse *string) {
    // Assigning the parsed specified URL
    parsedUrl, _ := ParseUrl(urlToParse)
-   urlData.DomainUrl = parsedUrl
-   // Initializing the childrenUrls parameter
-   urlData.ChildrenUrls = map[string]string{*urlToParse:""}
-   // Initializing the data parameter
-   urlData.Data = []string{}
+   urlProcess.DomainUrl = parsedUrl
+   // Initializing the waitingUrls 
+   waitingUrls := &Urls{Urls:map[string]string{*urlToParse:""}}
+   urlProcess.WaitingUrls = waitingUrls
+   // Initializing the processingUrls 
+   processingUrls := &MapUrlsData{UrlsData:map[string]map[string]string{}}
+   urlProcess.ProcessingUrls = processingUrls
+   // Initializing the crawledUrls 
+   crawledUrls := &MapUrlsData{UrlsData:map[string]map[string]string{}}
+   urlProcess.CrawledUrls = crawledUrls
 }
 
